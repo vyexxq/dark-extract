@@ -1,0 +1,11 @@
+# Render Blueprint — import in Render Dashboard → Blueprints
+services:
+  - type: web
+    name: dark-extract-server
+    runtime: node
+    buildCommand: npm install && npm run build -w @dark-extract/shared && npm run build -w @dark-extract/server
+    startCommand: npm run start -w @dark-extract/server
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: 20

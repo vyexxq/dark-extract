@@ -1,0 +1,21 @@
+{
+  "name": "dark-extract",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Dark fantasy multiplayer dungeon extraction game",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run build -w @dark-extract/shared && concurrently -n server,client -c blue,green \"npm run dev -w @dark-extract/server\" \"npm run dev -w @dark-extract/client\"",
+    "dev:server": "npm run dev -w @dark-extract/server",
+    "dev:client": "npm run dev -w @dark-extract/client",
+    "build": "npm run build -w @dark-extract/shared && npm run build -w @dark-extract/server && npm run build -w @dark-extract/client",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.3"
+  }
+}
