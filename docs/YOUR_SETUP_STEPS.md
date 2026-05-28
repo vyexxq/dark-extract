@@ -1,140 +1,110 @@
-# What you need to do (one-time, ~15 minutes, $0)
+# What you need to do (one-time, $0)
 
-I prepared the project for **GitHub + Render (server) + Vercel (game)**.  
-I **cannot** click “Sign in with GitHub” on your accounts from here — you do these steps once, then every `git push` updates the live game.
+| Part | Host |
+|------|------|
+| Game in browser | **Vercel** (free Hobby) |
+| Multiplayer server | **Render** (Free instance — $0) |
+| Code | **GitHub** |
 
-**Cost:** $0 on free tiers (personal / hobby use).
-
----
-
-## What I already set up in the project
-
-| File | Purpose |
-|------|---------|
-| `apps/client/vercel.json` | Vercel build settings (no dashboard typing) |
-| `render.yaml` | One-click Render server blueprint |
-| `apps/client/.env.example` | Shows `VITE_WS_URL` for production |
-| `apps/server/src/index.ts` | HTTP `/` health check + WebSocket on same port |
-| `docs/DEPLOY.md` | Full reference / troubleshooting |
+> **Card on Render?** Fine — see **[RENDER_STAY_FREE.md](./RENDER_STAY_FREE.md)** so you are not charged.  
+> **No card / no Render:** use **[FREE_NO_CREDIT_CARD.md](./FREE_NO_CREDIT_CARD.md)** (Railway).
 
 ---
 
-## Step 1 — GitHub (store the code)
+## Step 1 — GitHub (~5 min)
 
-1. Create a free account: https://github.com/signup  
-2. Create a **new repository** (empty): name it `dark-extract`, **Private** is fine.  
-3. On your PC, open PowerShell:
+1. https://github.com → new repo `dark-extract` (empty).
+2. PowerShell:
 
 ```powershell
 cd C:\Users\pc\Documents\dark-extract
-git init
 git add .
 git commit -m "Initial commit"
 git branch -M main
-git remote add origin https://github.com/YOUR_GITHUB_USERNAME/dark-extract.git
+git remote add origin https://github.com/YOUR_USERNAME/dark-extract.git
 git push -u origin main
 ```
 
-Replace `YOUR_GITHUB_USERNAME`. GitHub may ask you to sign in in the browser.
-
 ---
 
-## Step 2 — Render (free WebSocket server)
+## Step 2 — Render server (~5 min)
 
-Research (2026): Render free web services **spin down after 15 minutes with no traffic**, then take **~1 minute** to wake up. **750 free instance hours/month.** WebSockets are supported; active WS traffic counts as traffic.
+**Do not use Blueprint if it shows Starter $7.** Use manual Web Service:
 
-1. Sign up: https://dashboard.render.com/ (use **Sign in with GitHub**).  
-2. **Blueprints** → **New Blueprint Instance** → connect repo `dark-extract`.  
-3. Render should detect `render.yaml` → **Apply**.  
-4. Wait until status is **Live**.  
-5. Copy your service URL, e.g. `https://dark-extract-server.onrender.com`  
-6. Test in browser: open that URL — you should see JSON like `{"ok":true,"service":"dark-extract-hub"}`.
+1. https://dashboard.render.com → **New +** → **Web Service**.
+2. Connect repo `dark-extract` (see [RENDER_STAY_FREE.md](./RENDER_STAY_FREE.md) for build/start commands).
+3. **Instance type: Free** — must say $0, not Starter $7.
+4. When **Live**, open `https://YOUR-SERVICE.onrender.com` → JSON `{"ok":true,...}`.
 
-**Your WebSocket URL for Vercel** (swap in your real host):
+Your WebSocket URL:
 
 ```text
-wss://dark-extract-server.onrender.com
+wss://YOUR-SERVICE.onrender.com
 ```
 
-Use `wss://` (not `ws://`). No trailing slash.
+Read **[RENDER_STAY_FREE.md](./RENDER_STAY_FREE.md)** so your card is never charged for a paid tier.
+
+### Alternative: Railway (no Render)
+
+See **[FREE_NO_CREDIT_CARD.md](./FREE_NO_CREDIT_CARD.md)**.
 
 ---
 
-## Step 3 — Vercel (free game website)
+## Step 3 — Vercel game (~5 min)
 
-Research (2026): Vercel **Hobby** is free for personal projects — auto deploy on git push, HTTPS, plenty of bandwidth for a small game.
-
-1. Sign up: https://vercel.com/signup (use **Continue with GitHub**).  
-2. **Add New… → Project** → import `dark-extract`.  
-3. **Root Directory:** click Edit → set to `apps/client` (important).  
-4. Vercel should read `vercel.json` automatically.  
-5. **Environment Variables** → add:
+1. https://vercel.com → **Continue with GitHub**.
+2. Import `dark-extract`.
+3. **Root Directory:** `apps/client`
+4. **Environment variable:**
 
 | Name | Value |
 |------|--------|
-| `VITE_WS_URL` | `wss://YOUR-SERVER.onrender.com` |
+| `VITE_WS_URL` | `wss://YOUR-SERVICE.onrender.com` |
 
-6. **Deploy**.  
-7. Copy your game URL, e.g. `https://dark-extract.vercel.app`.
-
-Share **only the Vercel URL** with your friend.
+5. Deploy → share the `https://....vercel.app` link with your friend.
 
 ---
 
-## Step 4 — Play test
+## Step 4 — Play
 
-1. You open the Vercel link.  
-2. Friend opens the **same** link.  
-3. Both enter a name in the hub — you should see each other move.  
-4. If the server was asleep, wait up to ~60s and refresh once.
+- Both open the **Vercel** URL.
+- Same name hub → you should see each other.
+- Hard refresh after updates: `Ctrl+Shift+R`.
 
 ---
 
-## After setup — how updates work
+## Updates (after setup)
 
 ```powershell
 cd C:\Users\pc\Documents\dark-extract
-# edit files in Cursor (or ask the AI to edit)
 git add .
-git commit -m "describe change"
+git commit -m "what changed"
 git push
 ```
 
-- **Client-only changes:** Vercel rebuilds (~1–2 min) → hard refresh game (`Ctrl+Shift+R`).  
-- **Server changes:** Render rebuilds too → same refresh.  
-- No manual file uploads.
+Vercel + Railway rebuild from GitHub. No manual uploads.
 
 ---
 
-## Optional — install GitHub CLI later
+## Render (optional — only if you avoid the payment screen)
 
-```powershell
-winget install GitHub.cli
-gh auth login
-```
+Render **can** be free **without** a card if you create a **Web Service** manually and choose **Instance type: Free** (not Starter/Standard).
 
-Not required; git + browser login is enough.
+If the only option is “add payment method,” **close it** and use Railway instead.
 
 ---
 
-## If something fails
+## Quick test tonight (no Railway either)
 
-| Symptom | Fix |
-|---------|-----|
-| Hub works alone, friend invisible | Wrong `VITE_WS_URL` or missing `wss://` |
-| Stuck loading / offline | Render waking up — wait 60s, refresh |
-| Black screen after deploy | Hard refresh; check Vercel build logs |
-| Build failed on Vercel | Root Directory must be `apps/client` |
-
-More detail: [DEPLOY.md](./DEPLOY.md).
+See **[FREE_NO_CREDIT_CARD.md](./FREE_NO_CREDIT_CARD.md)** → Cloudflare quick tunnel while `npm run dev` runs on your PC.
 
 ---
 
-## What to send me back (so I can wire env vars in docs)
+## Files in this repo
 
-After you finish steps 2–3, you can paste (no secrets):
-
-- Render URL: `https://....onrender.com`  
-- Vercel URL: `https://....vercel.app`  
-
-I can’t log into your dashboards, but I can help debug if URLs don’t connect.
+| File | Purpose |
+|------|---------|
+| `railway.toml` | Railway start command |
+| `apps/client/vercel.json` | Vercel build |
+| `apps/client/.env.example` | `VITE_WS_URL` |
+| `docs/FREE_NO_CREDIT_CARD.md` | No-card options + Render explanation |

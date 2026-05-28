@@ -1,0 +1,12 @@
+# Railway — deploy from GitHub (no Render payment screen)
+# Dashboard: New Project → Deploy from GitHub → select this repo
+# If asked for a root/start command, Railway usually auto-detects; otherwise:
+#   Build:  npm install && npm run build -w @dark-extract/shared && npm run build -w @dark-extract/server
+#   Start:  npm run start -w @dark-extract/server
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npm run start -w @dark-extract/server"
+restartPolicyType = "on_failure"

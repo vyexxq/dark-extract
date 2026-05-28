@@ -10,8 +10,8 @@ Dark fantasy multiplayer dungeon extraction game — browser-based, modular arch
 
 ## Play online with friends
 
-**Start here:** **[docs/YOUR_SETUP_STEPS.md](docs/YOUR_SETUP_STEPS.md)** (one-time checklist, all free).  
-Reference: **[docs/DEPLOY.md](docs/DEPLOY.md)**.
+**Start here:** **[docs/YOUR_SETUP_STEPS.md](docs/YOUR_SETUP_STEPS.md)** (Vercel + Render).  
+**Card on Render — stay $0:** **[docs/RENDER_STAY_FREE.md](docs/RENDER_STAY_FREE.md)**.
 
 ## Quick start
 

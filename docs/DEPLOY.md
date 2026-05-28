@@ -1,11 +1,14 @@
 # Deploy Dark Extract online (play with friends)
 
+> **No credit card:** use **[FREE_NO_CREDIT_CARD.md](./FREE_NO_CREDIT_CARD.md)** (Vercel + Railway).  
+> Render often shows a payment screen for **paid** instances — you can skip Render entirely.
+
 You need **two** hosts:
 
-| Part | What it is | Where to host (free tier) |
-|------|------------|---------------------------|
-| **Client** | The game in the browser (HTML/JS) | [Vercel](https://vercel.com), [Netlify](https://netlify.com), or [GitHub Pages](https://pages.github.com) |
-| **Server** | WebSocket multiplayer + saves | [Render](https://render.com), [Railway](https://railway.app), or [Fly.io](https://fly.io) |
+| Part | What it is | Where to host (free, no card) |
+|------|------------|-------------------------------|
+| **Client** | The game in the browser (HTML/JS) | [Vercel](https://vercel.com) |
+| **Server** | WebSocket multiplayer + saves | **[Railway](https://railway.com)** (recommended) or Render **Free** instance only |
 
 GitHub Pages alone is **not enough** — it only serves static files. The game server must run somewhere that supports **WebSockets**.
 
