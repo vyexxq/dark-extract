@@ -55,8 +55,9 @@ export class ContractPanel extends Phaser.GameObjects.Container {
     this.setVisible(true);
 
     if (solo || !party || party.members.length < 2) {
-      this.status.setText("Solo contract");
-      this.hint.setText("[E] Enter cave  ·  [Tab] invite friends first");
+      this.status.setText("Solo — Goblin Cave");
+      this.hint.setText("[E] Start solo run now");
+      this.hint.setColor("#5a8a6a");
       return;
     }
 

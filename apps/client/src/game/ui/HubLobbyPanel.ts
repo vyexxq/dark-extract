@@ -4,6 +4,7 @@ import type { PlayerId } from "@dark-extract/shared";
 
 type InviteHandler = (targetId: PlayerId) => void;
 type LeaveHandler = () => void;
+type SoloHandler = () => void;
 
 /**
  * TAB lobby overlay — profile, party, hunter list with invite buttons.
@@ -16,12 +17,14 @@ export class HubLobbyPanel extends Phaser.GameObjects.Container {
   private readonly listTitle: Phaser.GameObjects.Text;
   private readonly hintText: Phaser.GameObjects.Text;
   private readonly leaveBtn: Phaser.GameObjects.Text;
+  private readonly soloBtn: Phaser.GameObjects.Text;
   private readonly rowTexts: Phaser.GameObjects.Text[] = [];
   private readonly inviteButtons: Phaser.GameObjects.Text[] = [];
   private roster: PlayerState[] = [];
   private myId: PlayerId = "";
   private onInvite: InviteHandler = () => {};
   private onLeave: LeaveHandler = () => {};
+  private onSolo: SoloHandler = () => {};
 
   constructor(scene: Phaser.Scene) {
     super(scene, 320, 240);
@@ -62,7 +65,7 @@ export class HubLobbyPanel extends Phaser.GameObjects.Container {
       })
       .setOrigin(0, 0);
     this.hintText = scene.add
-      .text(0, 150, "[Tab] close · invites need accept · [R] at Contracts", {
+      .text(0, 150, "[Tab] close · [E] solo at Contracts · party needs ready + leader E", {
         fontSize: "8px",
         color: "#6a5f76",
         fontFamily: "monospace",
@@ -80,6 +83,17 @@ export class HubLobbyPanel extends Phaser.GameObjects.Container {
       .setInteractive({ useHandCursor: true })
       .setVisible(false);
     this.leaveBtn.on("pointerdown", () => this.onLeave());
+    this.soloBtn = scene.add
+      .text(0, 108, "[ Solo cave ]", {
+        fontSize: "9px",
+        color: "#5a8a6a",
+        fontFamily: "monospace",
+        backgroundColor: "#1a3028",
+        padding: { x: 6, y: 3 },
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    this.soloBtn.on("pointerdown", () => this.onSolo());
 
     this.add([
       this.panelBg,
@@ -87,6 +101,7 @@ export class HubLobbyPanel extends Phaser.GameObjects.Container {
       this.profileText,
       this.partyText,
       this.listTitle,
+      this.soloBtn,
       this.leaveBtn,
       this.hintText,
     ]);
@@ -126,6 +141,10 @@ export class HubLobbyPanel extends Phaser.GameObjects.Container {
 
   setLeaveHandler(fn: LeaveHandler): void {
     this.onLeave = fn;
+  }
+
+  setSoloHandler(fn: SoloHandler): void {
+    this.onSolo = fn;
   }
 
   setMyId(id: PlayerId): void {

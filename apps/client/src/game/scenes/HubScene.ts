@@ -140,6 +140,13 @@ export class HubScene extends Phaser.Scene {
       this.connection.partyLeave();
       this.setStatus("Left party");
     });
+    this.lobbyPanel.setSoloHandler(() => {
+      if (!isNearHubContracts(this.localPos.x, this.localPos.y)) {
+        this.setStatus("Walk to the Contracts board, then start solo");
+        return;
+      }
+      this.connection.enterDungeonSolo();
+    });
 
     this.hudText = this.add
       .text(8, 8, "", { fontSize: "9px", color: "#8a7f96", fontFamily: "monospace" })
@@ -358,7 +365,15 @@ export class HubScene extends Phaser.Scene {
     this.refreshContractUi();
 
     if (this.canEnterDungeon && this.interactKey && Phaser.Input.Keyboard.JustDown(this.interactKey)) {
-      this.connection.enterDungeon();
+      const inParty = this.party && this.party.members.length >= 2;
+      const isLeader = this.party?.leaderId === myId;
+      const allReady = this.party?.members.every((m) => m.ready);
+      const allHere = this.party?.members.every((m) => m.atContract);
+      if (inParty && isLeader && allReady && allHere) {
+        this.connection.enterDungeonParty();
+      } else {
+        this.connection.enterDungeonSolo();
+      }
     } else if (!this.canEnterDungeon) {
       const partyHint =
         this.party && this.party.members.length > 1
@@ -464,11 +479,11 @@ export class HubScene extends Phaser.Scene {
       const allReady = this.party?.members.every((m) => m.ready);
       const allHere = this.party?.members.every((m) => m.atContract);
       if (inParty && isLeader && allReady && allHere) {
-        this.promptText?.setText("[E] Sign contract — start Goblin Cave");
+        this.promptText?.setText("[E] Start party cave · or leave party for solo");
       } else if (inParty) {
-        this.promptText?.setText("[R] ready at board · leader [E] when everyone is ready");
+        this.promptText?.setText("[R] ready · leader [E] when all ready · [E] solo if you leave party");
       } else {
-        this.promptText?.setText("[E] Enter cave solo · [Tab] invite friends first");
+        this.promptText?.setText("[E] Solo cave — no party needed");
       }
     }
   }

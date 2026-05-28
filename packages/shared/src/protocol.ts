@@ -23,7 +23,7 @@ export type ClientMessage =
   | { type: "party_decline"; inviteId: string }
   | { type: "party_leave" }
   | { type: "party_ready"; ready: boolean }
-  | { type: "enter_dungeon" }
+  | { type: "enter_dungeon"; solo?: boolean }
   | { type: "extract_dungeon"; runLoot: PlayerInventory }
   | { type: "abandon_dungeon"; reason: "death" | "flee" }
   | { type: "dungeon_move"; x: number; y: number; facing: Facing }

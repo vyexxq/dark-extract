@@ -224,9 +224,10 @@ export class HubConnection {
     this.send({ type: "party_decline", inviteId });
   }
 
-  enterDungeon(): void {
-    if (this.connected) {
-      this.send({ type: "enter_dungeon" });
+  /** Solo Goblin Cave — works online or fully offline (local sim). */
+  enterDungeonSolo(): void {
+    if (this.isConnected()) {
+      this.send({ type: "enter_dungeon", solo: true });
       return;
     }
     const preview = generateGoblinCaveTemplate(Date.now() >>> 0);
@@ -239,6 +240,15 @@ export class HubConnection {
       players: [],
       enemies: [],
     });
+  }
+
+  /** Party cave — leader only, all ready at Contracts. */
+  enterDungeonParty(): void {
+    if (!this.isConnected()) {
+      this.handlers.onError("Connect to the server for party dungeons");
+      return;
+    }
+    this.send({ type: "enter_dungeon", solo: false });
   }
 
   sendDungeonMove(x: number, y: number, facing: Facing): void {

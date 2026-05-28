@@ -334,6 +334,28 @@ function handleMessage(client: HubClient, message: ClientMessage): void {
     case "enter_dungeon": {
       if (client.inDungeon) return;
       const party = getPartyForPlayer(client.id);
+      const wantsSolo = message.solo === true;
+
+      if (wantsSolo) {
+        if (party && party.memberIds.length >= 2) {
+          send(client.socket, {
+            type: "error",
+            message: "Leave the party first (Tab) to run solo",
+          });
+          return;
+        }
+        if (party) {
+          const pid = party.id;
+          leaveParty(client.id);
+          broadcastPartyAll(pid);
+          broadcastParty(client);
+        }
+        startDungeon([client], false);
+        broadcast({ type: "hub_snapshot", snapshot: buildSnapshot() });
+        sendNotice(client.socket, "Entering Goblin Cave (solo)…");
+        break;
+      }
+
       if (party && party.memberIds.length >= 2) {
         tryStartPartyDungeon(client);
         return;
