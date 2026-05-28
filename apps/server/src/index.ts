@@ -196,8 +196,13 @@ function handleMessage(client: HubClient, message: ClientMessage): void {
         send(client.socket, { type: "error", message: "Only party leader can invite" });
         return;
       }
-      inviteToParty(party, target.id);
-      broadcastPartyAll(party.id);
+      if (!inviteToParty(party, target.id)) {
+        send(client.socket, { type: "error", message: "Party is full" });
+        return;
+      }
+      const state = getPartyState(party, playerNames());
+      send(client.socket, { type: "party_update", party: state });
+      send(target.socket, { type: "party_update", party: state });
       break;
     }
     case "party_accept": {
@@ -214,13 +219,14 @@ function handleMessage(client: HubClient, message: ClientMessage): void {
       break;
     }
     case "party_ready": {
-      const party = getPartyForPlayer(client.id);
-      if (!party) {
-        createParty(client.id);
+      let party = getPartyForPlayer(client.id);
+      if (!party) party = createParty(client.id);
+      setReady(party, client.id, message.ready);
+      const state = getPartyState(party, playerNames());
+      for (const memberId of party.memberIds) {
+        const member = hubClients.get(memberId);
+        if (member) send(member.socket, { type: "party_update", party: state });
       }
-      const p = getPartyForPlayer(client.id)!;
-      setReady(p, client.id, message.ready);
-      broadcastPartyAll(p.id);
       break;
     }
     case "party_start_dungeon": {

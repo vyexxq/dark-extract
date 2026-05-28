@@ -17,6 +17,7 @@ import { PlayerSprite } from "../entities/PlayerSprite";
 import { CONTRACTS_RADIUS, CONTRACTS_TILE, getHubTileIndex } from "../hub/hubLayout";
 import { createMovementKeys, readMovement, type MovementKeys } from "../input/createMovementKeys";
 import { renderTileGrid } from "../map/renderTilemap";
+import { HubLobbyPanel } from "../ui/HubLobbyPanel";
 
 const WORLD_W = HUB_WIDTH_TILES * TILE_SIZE;
 const WORLD_H = HUB_HEIGHT_TILES * TILE_SIZE;
@@ -46,8 +47,10 @@ export class HubScene extends Phaser.Scene {
   private canEnterDungeon = false;
   private party: PartyState | null = null;
   private progression: PlayerProgression = { level: 1, xp: 0 };
-  private inviteKey: Phaser.Input.Keyboard.Key | null = null;
   private readyKey: Phaser.Input.Keyboard.Key | null = null;
+  private tabKey: Phaser.Input.Keyboard.Key | null = null;
+  private lobbyPanel!: HubLobbyPanel;
+  private hubRoster: PlayerState[] = [];
 
   constructor() {
     super({ key: "HubScene" });
@@ -107,8 +110,14 @@ export class HubScene extends Phaser.Scene {
     }
     this.movementKeys = createMovementKeys(this.input.keyboard);
     this.interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
-    this.inviteKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.I);
     this.readyKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+    this.tabKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB);
+
+    this.lobbyPanel = new HubLobbyPanel(this);
+    this.lobbyPanel.setInviteHandler((targetId) => {
+      this.connection.partyInvite(targetId);
+      this.setStatus("Invite sent");
+    });
 
     this.hudText = this.add
       .text(8, 8, "", { fontSize: "9px", color: "#8a7f96", fontFamily: "monospace" })
@@ -144,12 +153,17 @@ export class HubScene extends Phaser.Scene {
           this.migrateLocalId(id);
         }
         this.removeDuplicateSelfSprites(id);
+        this.lobbyPanel.setMyId(id);
         this.setStatus("Connected");
         this.updateHud();
       },
       onSnapshot: (snapshot) => {
         if (!this.scene.isActive()) return;
+        this.hubRoster = snapshot.players;
         this.syncPlayers(snapshot.players);
+        if (this.lobbyPanel.isOpen()) {
+          this.refreshLobbyPanel();
+        }
       },
       onInventory: (inv, prog) => {
         this.inventory = inv;
@@ -160,7 +174,10 @@ export class HubScene extends Phaser.Scene {
       },
       onPartyUpdate: (party) => {
         this.party = party;
-        if (this.scene.isActive()) this.updateHud();
+        if (this.scene.isActive()) {
+          this.updateHud();
+          if (this.lobbyPanel.isOpen()) this.refreshLobbyPanel();
+        }
       },
       onDungeonStart: (payload) => {
         if (!this.scene.isActive()) return;
@@ -221,10 +238,27 @@ export class HubScene extends Phaser.Scene {
     }
 
     this.removeDuplicateSelfSprites(this.localId);
+
+    const existingNetId = this.registry.get("networkPlayerId") as PlayerId | undefined;
+    if (existingNetId) {
+      this.networkId = existingNetId;
+      this.localId = existingNetId;
+      this.lobbyPanel.setMyId(existingNetId);
+    }
   }
 
   update(_time: number, delta: number): void {
     if (!this.ready || !this.movementKeys) return;
+
+    if (this.tabKey && Phaser.Input.Keyboard.JustDown(this.tabKey)) {
+      const open = this.lobbyPanel.toggle();
+      if (open) this.refreshLobbyPanel();
+    }
+
+    if (this.lobbyPanel.isOpen()) {
+      this.promptText?.setText("[Tab] close lobby");
+      return;
+    }
 
     const { dx, dy } = readMovement(this.movementKeys);
     this.moving = dx !== 0 || dy !== 0;
@@ -256,10 +290,6 @@ export class HubScene extends Phaser.Scene {
     const dist = Phaser.Math.Distance.Between(this.localPos.x, this.localPos.y, contractX, contractY);
     this.canEnterDungeon = dist < CONTRACTS_RADIUS;
 
-    if (this.inviteKey && Phaser.Input.Keyboard.JustDown(this.inviteKey)) {
-      this.inviteNearestPlayer();
-    }
-
     if (this.readyKey && Phaser.Input.Keyboard.JustDown(this.readyKey)) {
       const me = this.party?.members.find((m) => m.playerId === this.networkId);
       const ready = !me?.ready;
@@ -279,13 +309,13 @@ export class HubScene extends Phaser.Scene {
       } else if (inParty) {
         this.promptText?.setText("[R] Ready · leader [E] when all ready");
       } else {
-        this.promptText?.setText("[E] Solo goblin cave · [I] invite nearby");
+        this.promptText?.setText("[Tab] lobby & invites · [E] solo cave");
         if (this.interactKey && Phaser.Input.Keyboard.JustDown(this.interactKey)) {
           this.connection.enterDungeonSolo();
         }
       }
     } else {
-      this.promptText?.setText(this.party ? "[R] toggle ready · [I] invite" : "");
+      this.promptText?.setText(this.party ? "[Tab] lobby · [R] ready" : "[Tab] hunter lobby");
     }
 
     const now = this.time.now;
@@ -367,26 +397,19 @@ export class HubScene extends Phaser.Scene {
     );
   }
 
-  private inviteNearestPlayer(): void {
-    if (!this.networkId) return;
-    let bestId: PlayerId | null = null;
-    let bestName = "";
-    let bestD = 80;
-    for (const [id, s] of this.sprites) {
-      if (id === this.localId || id === this.networkId) continue;
-      const d = Phaser.Math.Distance.Between(this.localPos.x, this.localPos.y, s.x, s.y);
-      if (d < bestD) {
-        bestD = d;
-        bestId = id;
-        bestName = this.labels.get(id)?.text ?? "Hunter";
-      }
-    }
-    if (bestId) {
-      this.connection.partyInvite(bestId);
-      this.setStatus(`Invited ${bestName}`);
-    } else {
-      this.setStatus("No hunter nearby to invite");
-    }
+  private refreshLobbyPanel(): void {
+    const myId =
+      (this.registry.get("networkPlayerId") as PlayerId | undefined) ??
+      this.networkId ??
+      this.localId;
+    this.lobbyPanel.setMyId(myId);
+    this.lobbyPanel.refresh(
+      (this.registry.get("playerName") as string) ?? "Hunter",
+      this.progression,
+      this.inventory,
+      this.party,
+      this.hubRoster,
+    );
   }
 
   private drawLandmarks(): void {

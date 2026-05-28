@@ -29,7 +29,7 @@ export function App() {
         <h1>Dark Extract</h1>
         <p className="subtitle">Phase 2 — Party dungeons · XP · accounts</p>
         <p className="hint">
-          Hub: E contract · I invite nearest · R ready · LMB/F in dungeon · extract together
+          Tab = lobby & invites · E = cave · R = ready · LMB/F in dungeon
         </p>
       </header>
       <GameCanvas

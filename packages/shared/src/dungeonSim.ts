@@ -162,7 +162,7 @@ export function tickDungeonCombat(
     if (!target) continue;
     enemy.targetId = target.id;
 
-    const d = dist(enemy.x, enemy.y, target.x, target.y);
+    const def = ENEMY_DEFS[enemy.kind];
 
     if (enemy.stunnedTimer > 0) {
       enemy.stunnedTimer -= dt;
@@ -174,10 +174,9 @@ export function tickDungeonCombat(
       continue;
     }
 
-    const def = ENEMY_DEFS[enemy.kind];
-
     if (enemy.phase === "idle") {
-      if (d < def.chaseRange && d > MELEE_RANGE) {
+      const chaseD = dist(enemy.x, enemy.y, target.x, target.y);
+      if (chaseD < def.chaseRange && chaseD > MELEE_RANGE) {
         const angle = Math.atan2(target.y - enemy.y, target.x - enemy.x);
         const speed = def.speed * dt;
         const nx = enemy.x + Math.cos(angle) * speed;
@@ -185,37 +184,33 @@ export function tickDungeonCombat(
         if (canWalk(map, nx, enemy.y)) enemy.x = nx;
         if (canWalk(map, enemy.x, ny)) enemy.y = ny;
       }
-      if (d < MELEE_RANGE && enemy.phaseTimer <= 0) {
+      const meleeD = dist(enemy.x, enemy.y, target.x, target.y);
+      if (meleeD < MELEE_RANGE + 2 && enemy.phaseTimer <= 0) {
         enemy.phase = "telegraph";
         enemy.phaseTimer = 0;
         enemy.strikeHit = false;
       }
       if (enemy.phaseTimer > 0) enemy.phaseTimer -= dt;
-    }
-
-    if (enemy.phase === "telegraph") {
+    } else if (enemy.phase === "telegraph") {
       enemy.phaseTimer += dt;
       if (enemy.phaseTimer >= def.telegraphSec) {
         enemy.phase = "strike";
         enemy.phaseTimer = 0;
+        enemy.strikeHit = false;
       }
-    }
-
-    if (enemy.phase === "strike") {
+    } else if (enemy.phase === "strike") {
       enemy.phaseTimer += dt;
-      if (!enemy.strikeHit && enemy.phaseTimer >= STRIKE_SEC * 0.5) {
-        if (d < MELEE_RANGE + 4) {
+      if (!enemy.strikeHit && enemy.phaseTimer >= STRIKE_SEC * 0.4) {
+        const strikeD = dist(enemy.x, enemy.y, target.x, target.y);
+        if (strikeD < MELEE_RANGE + 10) {
           if (target.parryUntil > now) {
             enemy.stunnedTimer = STUN_SEC;
             enemy.strikeHit = true;
             target.riposteUntil = now + 1400;
           } else {
             enemy.strikeHit = true;
-            target.hp -= def.damage;
-            if (target.hp <= 0) {
-              target.hp = 0;
-              target.dead = true;
-            }
+            target.hp = Math.max(0, target.hp - def.damage);
+            if (target.hp <= 0) target.dead = true;
           }
         } else {
           enemy.strikeHit = true;

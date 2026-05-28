@@ -133,6 +133,7 @@ export class DungeonScene extends Phaser.Scene {
   private levelBanner?: Phaser.GameObjects.Text;
   private partyRun = false;
   private initialEnemies: DungeonSnapshotEnemy[] = [];
+  private lastHp = 100;
 
   constructor() {
     super({ key: "DungeonScene" });
@@ -154,6 +155,7 @@ export class DungeonScene extends Phaser.Scene {
     this.initialEnemies = data.enemies ?? [];
     this.myPlayerId =
       (this.registry.get("networkPlayerId") as PlayerId | undefined) ?? "local";
+    this.lastHp = this.hp;
     this.progression =
       (this.registry.get("playerProgression") as PlayerProgression | undefined) ?? {
         level: 1,
@@ -399,6 +401,7 @@ export class DungeonScene extends Phaser.Scene {
         this.pendingSnapshot = null;
       }
       this.handleParryInput();
+      this.updateNetEnemyVisuals(dt);
     } else {
       this.updateEnemies(dt);
     }
@@ -769,21 +772,74 @@ export class DungeonScene extends Phaser.Scene {
     });
   }
 
+  private resolveMySnapshot(
+    players: DungeonSnapshotPlayer[],
+  ): DungeonSnapshotPlayer | undefined {
+    const netId = this.registry.get("networkPlayerId") as PlayerId | undefined;
+    if (netId) {
+      const hit = players.find((p) => p.id === netId);
+      if (hit) return hit;
+    }
+    const byLocal = players.find((p) => p.id === this.myPlayerId);
+    if (byLocal) return byLocal;
+    const name = this.registry.get("playerName") as string | undefined;
+    if (name) return players.find((p) => p.name === name);
+    return undefined;
+  }
+
+  private myNetworkId(): PlayerId {
+    return (
+      (this.registry.get("networkPlayerId") as PlayerId | undefined) ??
+      this.myPlayerId
+    );
+  }
+
+  private applyHurtFx(): void {
+    this.cameras.main.shake(90, 0.005);
+    this.cameras.main.flash(60, 80, 20, 20, false, undefined, 0.12);
+    this.player.setTint(0xff8888);
+    this.time.delayedCall(120, () => {
+      if (this.player.active) this.player.clearTint();
+    });
+  }
+
+  /** Client-side telegraph/strike feedback between server ticks */
+  private updateNetEnemyVisuals(dt: number): void {
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      enemy.healthBar.followWorld(enemy.sprite.x, enemy.sprite.y, -18);
+      if (enemy.phase === "telegraph") {
+        enemy.telegraph?.setPosition(enemy.sprite.x, enemy.sprite.y - 6);
+        enemy.sprite.setTint(0xff6666);
+      } else if (enemy.phase !== "stunned") {
+        enemy.sprite.clearTint();
+      }
+      if (enemy.stunnedTimer > 0) {
+        enemy.stunnedTimer -= dt;
+      }
+    }
+  }
+
   private applyNetSnapshot(snap: {
     players: DungeonSnapshotPlayer[];
     enemies: DungeonSnapshotEnemy[];
   }): void {
-    const me = snap.players.find((p) => p.id === this.myPlayerId);
+    const myId = this.myNetworkId();
+    const me = this.resolveMySnapshot(snap.players);
     if (me && !me.dead) {
+      if (me.hp < this.lastHp) {
+        this.applyHurtFx();
+      }
       this.hp = me.hp;
       this.maxHp = me.maxHp;
+      this.lastHp = me.hp;
       this.playerHpBar.setHealth(this.hp, this.maxHp);
     } else if (me?.dead && !this.ended) {
       this.endDungeon(false, "You fell. Run loot lost.", true);
     }
 
     for (const p of snap.players) {
-      if (p.id === this.myPlayerId) continue;
+      if (p.id === myId || p.id === me?.id) continue;
       let sprite = this.peerSprites.get(p.id);
       if (!sprite) {
         sprite = new PlayerSprite(this, p.x, p.y, 0xc9b8a8);
@@ -818,12 +874,22 @@ export class DungeonScene extends Phaser.Scene {
         destroyParryTelegraph(local.telegraph);
         local.telegraph = undefined;
       }
+      const wasStunned = local.phase === "stunned";
       if (se.phase === "telegraph" && !local.telegraph && !se.dead) {
         local.telegraph = createParryTelegraph(this, se.x, se.y - 6);
       }
       if (se.phase !== "telegraph") {
         destroyParryTelegraph(local.telegraph);
         local.telegraph = undefined;
+      }
+      if (se.phase === "stunned" && !wasStunned && this.parryWindowMs > 0) {
+        this.counterReady = true;
+        this.counterTimer = 1.4;
+        this.banner.setText("Parry! — click to riposte");
+        this.banner.setColor("#ffdd44");
+      }
+      if (se.phase === "strike") {
+        local.sprite.setTint(0xff2222);
       }
     }
     this.updateHud();
