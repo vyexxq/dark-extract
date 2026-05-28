@@ -78,3 +78,94 @@ body,
 .dot {
   opacity: 0.5;
 }
+
+.auth-screen {
+  max-width: 360px;
+  margin: 4rem auto;
+  padding: 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.auth-screen h2 {
+  margin: 0;
+  text-align: center;
+}
+
+.auth-sub {
+  margin: 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.auth-tabs button {
+  flex: 1;
+  padding: 0.45rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.auth-tabs button.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(155, 107, 255, 0.12);
+}
+
+.auth-screen input {
+  padding: 0.55rem 0.65rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0f0c14;
+  color: var(--text);
+}
+
+.auth-error {
+  color: #e07070;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.auth-submit {
+  padding: 0.65rem;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-submit:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.auth-link {
+  background: none;
+  border: none;
+  color: var(--torch);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.logout-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: inherit;
+  padding: 0;
+}

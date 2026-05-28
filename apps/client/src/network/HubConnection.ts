@@ -1,20 +1,44 @@
 import {
-  generateDungeon,
+  generateGoblinCaveTemplate,
   type ClientMessage,
+  type DungeonSnapshotEnemy,
+  type DungeonSnapshotPlayer,
   type Facing,
   type HubSnapshot,
+  type PartyState,
   type PlayerId,
   type PlayerInventory,
+  type PlayerProfile,
+  type PlayerProgression,
   parseServerMessage,
 } from "@dark-extract/shared";
 
 export type HubHandlers = {
-  onWelcome: (playerId: PlayerId, name: string) => void;
+  onWelcome: (playerId: PlayerId, name: string, profile: PlayerProfile | null) => void;
   onSnapshot: (snapshot: HubSnapshot) => void;
-  onInventory: (inventory: PlayerInventory) => void;
-  onDungeonStart: (seed: number, width: number, height: number) => void;
+  onInventory: (inventory: PlayerInventory, progression: PlayerProgression) => void;
+  onPartyUpdate: (party: PartyState | null) => void;
+  onDungeonStart: (payload: {
+    instanceId: string;
+    seed: number;
+    width: number;
+    height: number;
+    party: boolean;
+    players: DungeonSnapshotPlayer[];
+    enemies: DungeonSnapshotEnemy[];
+  }) => void;
+  onDungeonSnapshot: (
+    players: DungeonSnapshotPlayer[],
+    enemies: DungeonSnapshotEnemy[],
+  ) => void;
+  onDungeonLoot: (material: string, gold: number) => void;
+  onLevelUp: (progression: PlayerProgression) => void;
   onDungeonEnd: (message: string) => void;
-  onExtractOk: (inventory: PlayerInventory, message: string) => void;
+  onExtractOk: (
+    inventory: PlayerInventory,
+    progression: PlayerProgression,
+    message: string,
+  ) => void;
   onError: (message: string) => void;
   onConnectionChange: (connected: boolean) => void;
 };
@@ -25,7 +49,11 @@ const INERT_HANDLERS: HubHandlers = {
   onWelcome: noop,
   onSnapshot: noop,
   onInventory: noop,
+  onPartyUpdate: noop,
   onDungeonStart: noop,
+  onDungeonSnapshot: noop,
+  onDungeonLoot: noop,
+  onLevelUp: noop,
   onDungeonEnd: noop,
   onExtractOk: noop,
   onError: noop,
@@ -37,10 +65,12 @@ export class HubConnection {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connected = false;
   private handlers: HubHandlers = INERT_HANDLERS;
+  private authed = false;
 
   constructor(
     private readonly wsUrl: string,
-    private readonly playerName: string,
+    private readonly authToken: string | null,
+    private readonly guestName: string,
   ) {}
 
   setHandlers(handlers: HubHandlers): void {
@@ -57,11 +87,16 @@ export class HubConnection {
     try {
       const socket = new WebSocket(this.wsUrl);
       this.socket = socket;
+      this.authed = false;
 
       socket.onopen = () => {
         this.connected = true;
         this.handlers.onConnectionChange(true);
-        this.send({ type: "join", name: this.playerName });
+        if (this.authToken) {
+          this.send({ type: "auth_session", token: this.authToken });
+        } else {
+          this.send({ type: "join", name: this.guestName });
+        }
       };
 
       socket.onmessage = (event) => {
@@ -69,23 +104,51 @@ export class HubConnection {
         if (!message) return;
 
         switch (message.type) {
+          case "auth_ok":
+            this.authed = true;
+            break;
           case "welcome":
-            this.handlers.onWelcome(message.playerId, message.name);
+            this.authed = true;
+            this.handlers.onWelcome(message.playerId, message.name, message.profile ?? null);
             break;
           case "hub_snapshot":
             this.handlers.onSnapshot(message.snapshot);
             break;
           case "inventory":
-            this.handlers.onInventory(message.inventory);
+            this.handlers.onInventory(message.inventory, message.progression);
+            break;
+          case "party_update":
+            this.handlers.onPartyUpdate(message.party);
             break;
           case "dungeon_start":
-            this.handlers.onDungeonStart(message.seed, message.width, message.height);
+            this.handlers.onDungeonStart({
+              instanceId: message.instanceId,
+              seed: message.seed,
+              width: message.width,
+              height: message.height,
+              party: message.party,
+              players: message.players,
+              enemies: message.enemies,
+            });
+            break;
+          case "dungeon_snapshot":
+            this.handlers.onDungeonSnapshot(message.players, message.enemies);
+            break;
+          case "dungeon_loot":
+            this.handlers.onDungeonLoot(message.material, message.gold);
+            break;
+          case "level_up":
+            this.handlers.onLevelUp(message.progression);
             break;
           case "dungeon_end":
             this.handlers.onDungeonEnd(message.message);
             break;
           case "extract_ok":
-            this.handlers.onExtractOk(message.inventory, message.message);
+            this.handlers.onExtractOk(
+              message.inventory,
+              message.progression,
+              message.message,
+            );
             break;
           case "error":
             this.handlers.onError(message.message);
@@ -97,6 +160,7 @@ export class HubConnection {
 
       socket.onclose = () => {
         this.connected = false;
+        this.authed = false;
         this.handlers.onConnectionChange(false);
         this.scheduleReconnect();
       };
@@ -117,20 +181,56 @@ export class HubConnection {
   }
 
   isConnected(): boolean {
-    return this.connected;
+    return this.connected && this.authed;
   }
 
   sendMove(x: number, y: number, facing: Facing): void {
     this.send({ type: "move", x, y, facing });
   }
 
-  enterDungeon(): void {
+  partyInvite(targetId: PlayerId): void {
+    this.send({ type: "party_invite", targetId });
+  }
+
+  partyLeave(): void {
+    this.send({ type: "party_leave" });
+  }
+
+  partyReady(ready: boolean): void {
+    this.send({ type: "party_ready", ready });
+  }
+
+  partyStartDungeon(): void {
+    this.send({ type: "party_start_dungeon" });
+  }
+
+  enterDungeonSolo(): void {
     if (this.connected) {
       this.send({ type: "enter_dungeon" });
       return;
     }
-    const preview = generateDungeon(Date.now() >>> 0);
-    this.handlers.onDungeonStart(preview.seed, preview.width, preview.height);
+    const preview = generateGoblinCaveTemplate(Date.now() >>> 0);
+    this.handlers.onDungeonStart({
+      instanceId: "local",
+      seed: preview.seed,
+      width: preview.width,
+      height: preview.height,
+      party: false,
+      players: [],
+      enemies: [],
+    });
+  }
+
+  sendDungeonMove(x: number, y: number, facing: Facing): void {
+    this.send({ type: "dungeon_move", x, y, facing });
+  }
+
+  sendDungeonSlash(angle: number): void {
+    this.send({ type: "dungeon_slash", angle });
+  }
+
+  sendDungeonParry(): void {
+    this.send({ type: "dungeon_parry" });
   }
 
   extractDungeon(runLoot: PlayerInventory): void {
@@ -138,7 +238,11 @@ export class HubConnection {
       this.send({ type: "extract_dungeon", runLoot });
       return;
     }
-    this.handlers.onExtractOk(runLoot, "Extracted (offline — start server to save)");
+    this.handlers.onExtractOk(
+      runLoot,
+      { level: 1, xp: 0 },
+      "Extracted (offline — start server to save)",
+    );
   }
 
   abandonDungeon(reason: "death" | "flee"): void {
@@ -165,11 +269,12 @@ export class HubConnection {
 export function getOrCreateHubConnection(
   game: Phaser.Game,
   wsUrl: string,
-  playerName: string,
+  authToken: string | null,
+  guestName: string,
 ): HubConnection {
   let conn = game.registry.get("hubConnection") as HubConnection | undefined;
   if (!conn) {
-    conn = new HubConnection(wsUrl, playerName);
+    conn = new HubConnection(wsUrl, authToken, guestName);
     game.registry.set("hubConnection", conn);
     conn.connect();
   }

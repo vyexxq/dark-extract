@@ -2,7 +2,7 @@
 
 Dark fantasy multiplayer dungeon extraction game — browser-based, modular architecture.
 
-**Phase 1 (current):** Pixel hub + animated player, procedural goblin cave, extract loop, death penalty B.
+**Phase 2 (current):** Accounts, XP/levels, party dungeons (2–3), server-synced combat & loot, goblin cave template.
 
 ## Art assets
 

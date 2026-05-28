@@ -5,14 +5,20 @@ import {
   TILE_SIZE,
   addMaterial,
   EMPTY_INVENTORY,
-  generateDungeon,
+  generateGoblinCaveTemplate,
   isWalkableTile,
+  maxHpForLevel,
   mergeInventory,
   tileAt,
+  xpProgressInLevel,
   type DungeonMap,
+  type DungeonSnapshotEnemy,
+  type DungeonSnapshotPlayer,
   type Facing,
   type MaterialId,
+  type PlayerId,
   type PlayerInventory,
+  type PlayerProgression,
 } from "@dark-extract/shared";
 import { TILE } from "../art/TextureFactory";
 import { aimAngleFromPointer, performSlash, type SlashHitTarget } from "../combat/slashAttack";
@@ -114,20 +120,55 @@ export class DungeonScene extends Phaser.Scene {
   private extractGlow!: Phaser.GameObjects.Arc;
   private ended = false;
   private pointerAttackHandler?: (p: Phaser.Input.Pointer) => void;
+  private netMode = false;
+  private myPlayerId: PlayerId = "local";
+  private progression: PlayerProgression = { level: 1, xp: 0 };
+  private peerSprites = new Map<PlayerId, PlayerSprite>();
+  private peerLabels = new Map<PlayerId, Phaser.GameObjects.Text>();
+  private lastMoveSent = 0;
+  private pendingSnapshot: {
+    players: DungeonSnapshotPlayer[];
+    enemies: DungeonSnapshotEnemy[];
+  } | null = null;
+  private levelBanner?: Phaser.GameObjects.Text;
+  private partyRun = false;
+  private initialEnemies: DungeonSnapshotEnemy[] = [];
 
   constructor() {
     super({ key: "DungeonScene" });
   }
 
-  init(data: { seed: number; width: number; height: number; inventory?: PlayerInventory }): void {
+  init(data: {
+    seed: number;
+    width: number;
+    height: number;
+    inventory?: PlayerInventory;
+    party?: boolean;
+    instanceId?: string;
+    players?: DungeonSnapshotPlayer[];
+    enemies?: DungeonSnapshotEnemy[];
+  }): void {
     this.registry.set("inDungeon", true);
-    this.map = generateDungeon(data.seed ?? Date.now(), data.width, data.height);
+    this.netMode = data.instanceId !== undefined && data.instanceId !== "local";
+    this.partyRun = !!data.party;
+    this.initialEnemies = data.enemies ?? [];
+    this.myPlayerId =
+      (this.registry.get("networkPlayerId") as PlayerId | undefined) ?? "local";
+    this.progression =
+      (this.registry.get("playerProgression") as PlayerProgression | undefined) ?? {
+        level: 1,
+        xp: 0,
+      };
+    this.map = generateGoblinCaveTemplate(data.seed ?? Date.now(), data.width, data.height);
     if (data.inventory) {
       this.registry.set("hubInventory", data.inventory);
     }
     this.ended = false;
     this.enemies = [];
-    this.hp = 100;
+    this.peerSprites.clear();
+    this.peerLabels.clear();
+    this.maxHp = maxHpForLevel(this.progression.level);
+    this.hp = this.maxHp;
     this.runLoot = { materials: [], gold: 0 };
     this.counterReady = false;
     this.attackCooldown = 0;
@@ -181,10 +222,21 @@ export class DungeonScene extends Phaser.Scene {
       repeat: -1,
     });
 
-    this.map.enemySpawns.forEach((spawn, i) => {
-      const kind: EnemyKind = i % 2 === 0 ? "goblin" : "shambler";
-      this.spawnEnemy(kind, spawn.x, spawn.y);
-    });
+    if (this.netMode && this.initialEnemies.length > 0) {
+      for (const e of this.initialEnemies) {
+        this.spawnEnemyFromNet(e);
+      }
+    } else if (this.netMode) {
+      this.map.enemySpawns.forEach((spawn, i) => {
+        const kind: EnemyKind = i % 2 === 0 ? "goblin" : "shambler";
+        this.spawnEnemy(kind, spawn.x, spawn.y);
+      });
+    } else {
+      this.map.enemySpawns.forEach((spawn, i) => {
+        const kind: EnemyKind = i % 2 === 0 ? "goblin" : "shambler";
+        this.spawnEnemy(kind, spawn.x, spawn.y);
+      });
+    }
 
     if (this.input.keyboard) {
       this.movementKeys = createMovementKeys(this.input.keyboard);
@@ -201,10 +253,66 @@ export class DungeonScene extends Phaser.Scene {
       .setDepth(100);
 
     this.banner = this.add
-      .text(320, 24, "Goblin Cave", { fontSize: "11px", color: "#e8a84a", fontFamily: "monospace" })
+      .text(320, 24, this.partyRun ? "Goblin Cave (party)" : "Goblin Cave", {
+        fontSize: "11px",
+        color: "#e8a84a",
+        fontFamily: "monospace",
+      })
       .setOrigin(0.5)
       .setScrollFactor(0)
       .setDepth(100);
+
+    this.levelBanner = this.add
+      .text(320, 38, this.levelLine(), {
+        fontSize: "9px",
+        color: "#8a7f96",
+        fontFamily: "monospace",
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(100);
+
+    const connection = this.registry.get("connection") as HubConnection | undefined;
+    if (this.netMode && connection) {
+      connection.setHandlers({
+        onWelcome: () => {},
+        onSnapshot: () => {},
+        onInventory: () => {},
+        onPartyUpdate: () => {},
+        onDungeonStart: () => {},
+        onDungeonSnapshot: (players, enemies) => {
+          this.pendingSnapshot = { players, enemies };
+        },
+        onDungeonLoot: (material, gold) => {
+          this.runLoot = addMaterial(
+            this.runLoot,
+            material as MaterialId,
+            1,
+          );
+          if (gold) this.runLoot = { ...this.runLoot, gold: this.runLoot.gold + gold };
+          this.updateHud();
+        },
+        onLevelUp: (prog) => {
+          this.progression = prog;
+          this.registry.set("playerProgression", prog);
+          this.maxHp = maxHpForLevel(prog.level);
+          this.hp = this.maxHp;
+          this.levelBanner?.setText(this.levelLine());
+          this.banner.setText(`Level ${prog.level}!`);
+          this.banner.setColor("#ffdd44");
+        },
+        onDungeonEnd: (msg) => {
+          this.endDungeon(false, msg, true);
+        },
+        onExtractOk: (inv, prog, msg) => {
+          this.registry.set("hubInventory", inv);
+          this.registry.set("playerProgression", prog);
+          this.endDungeon(true, msg, true);
+        },
+        onError: () => {},
+        onConnectionChange: () => {},
+      });
+    }
 
     this.add
       .text(320, 440, "LMB slash · F = 0.3s parry window (block on hit) · time the enemy +", {
@@ -279,10 +387,25 @@ export class DungeonScene extends Phaser.Scene {
     this.player.updateAnimation(this.facing, moving);
     this.playerHpBar.setHealth(this.hp, this.maxHp);
 
-    this.updateEnemies(dt);
+    if (this.netMode) {
+      const connection = this.registry.get("connection") as HubConnection | undefined;
+      const now = this.time.now;
+      if (connection && now - this.lastMoveSent > 50) {
+        this.lastMoveSent = now;
+        connection.sendDungeonMove(this.pos.x, this.pos.y, this.facing);
+      }
+      if (this.pendingSnapshot) {
+        this.applyNetSnapshot(this.pendingSnapshot);
+        this.pendingSnapshot = null;
+      }
+      this.handleParryInput();
+    } else {
+      this.updateEnemies(dt);
+    }
+
     this.checkExtract();
 
-    if (this.hp <= 0) {
+    if (this.hp <= 0 && !this.netMode) {
       this.endDungeon(false, "You fell. Run loot lost (gear kept).");
     }
   }
@@ -313,8 +436,16 @@ export class DungeonScene extends Phaser.Scene {
     this.player.playAttackLunge(angle);
 
     const riposte = this.counterReady;
-    const damage = riposte ? 30 : 15;
 
+    if (this.netMode) {
+      const connection = this.registry.get("connection") as HubConnection | undefined;
+      connection?.sendDungeonSlash(angle);
+      performSlash(this, this.pos.x, this.pos.y, angle, [], riposte);
+      if (riposte) this.counterReady = false;
+      return;
+    }
+
+    const damage = riposte ? 30 : 15;
     const targets: SlashHitTarget[] = this.enemies
       .filter((e) => !e.dead)
       .map((enemy) => ({
@@ -377,6 +508,24 @@ export class DungeonScene extends Phaser.Scene {
 
   private activateParryWindow(): void {
     if (this.parryCooldownMs > 0 || this.parryWindowMs > 0) return;
+
+    if (this.netMode) {
+      const connection = this.registry.get("connection") as HubConnection | undefined;
+      connection?.sendDungeonParry();
+      this.startParryCooldown();
+      this.parryWindowMs = PARRY_WINDOW_MS;
+      this.parryOutline?.stop();
+      this.parryOutline = beginParryWindowOutline(
+        this,
+        () => ({ x: this.pos.x, y: this.pos.y }),
+        PARRY_WINDOW_MS,
+      );
+      this.time.delayedCall(PARRY_WINDOW_MS, () => {
+        this.parryOutline?.stop();
+        this.parryOutline = undefined;
+      });
+      return;
+    }
 
     this.parryWindowMs = PARRY_WINDOW_MS;
     this.startParryCooldown();
@@ -534,6 +683,7 @@ export class DungeonScene extends Phaser.Scene {
   }
 
   private checkExtract(): void {
+    if (this.netMode) return;
     const ex = this.map.extract.x * TILE_SIZE + TILE_SIZE / 2;
     const ey = this.map.extract.y * TILE_SIZE + TILE_SIZE / 2;
     if (Phaser.Math.Distance.Between(this.pos.x, this.pos.y, ex, ey) < 14) {
@@ -541,7 +691,7 @@ export class DungeonScene extends Phaser.Scene {
     }
   }
 
-  private endDungeon(success: boolean, message: string): void {
+  private endDungeon(success: boolean, message: string, serverHandled = false): void {
     if (this.ended) return;
     this.ended = true;
     this.movementKeys = null;
@@ -557,25 +707,125 @@ export class DungeonScene extends Phaser.Scene {
     const base =
       (this.registry.get("hubInventory") as PlayerInventory | undefined) ?? EMPTY_INVENTORY;
 
-    if (success) {
-      const merged = mergeInventory(base, this.runLoot);
-      this.registry.set("hubInventory", merged);
-      connection?.extractDungeon(this.runLoot);
-    } else {
-      connection?.abandonDungeon("death");
+    if (!serverHandled) {
+      if (success && !this.netMode) {
+        const merged = mergeInventory(base, this.runLoot);
+        this.registry.set("hubInventory", merged);
+        connection?.extractDungeon(this.runLoot);
+      } else if (!success && !this.netMode) {
+        connection?.abandonDungeon("death");
+      } else if (!success && this.netMode) {
+        connection?.abandonDungeon("death");
+      }
     }
 
-    this.time.delayedCall(1000, () => {
+    this.time.delayedCall(serverHandled ? 400 : 1000, () => {
       const inv =
         (this.registry.get("hubInventory") as PlayerInventory | undefined) ?? base;
+      const prog =
+        (this.registry.get("playerProgression") as PlayerProgression | undefined) ??
+        this.progression;
       this.scene.stop();
       this.scene.start("HubScene", { inventory: inv, statusMsg: message });
+      this.registry.set("playerProgression", prog);
     });
   }
 
   private updateHud(): void {
     const alive = this.enemies.filter((e) => !e.dead).length;
     const mats = this.runLoot.materials.map((m) => `${m.id}:${m.qty}`).join(" ") || "—";
-    this.hud.setText(`Foes ${alive} · loot ${mats} · gold ${this.runLoot.gold}`);
+    const xp = xpProgressInLevel(this.progression);
+    this.hud.setText(
+      `Lv${this.progression.level} · foes ${alive} · loot ${mats} · gold ${this.runLoot.gold} · XP ${xp.current}/${xp.needed}`,
+    );
+  }
+
+  private levelLine(): string {
+    const xp = xpProgressInLevel(this.progression);
+    return `Level ${this.progression.level} · XP ${xp.current}/${xp.needed}`;
+  }
+
+  private spawnEnemyFromNet(e: DungeonSnapshotEnemy): void {
+    const def = ENEMY_DEFS[e.kind];
+    const sprite = this.add.sprite(e.x, e.y, def.texture, 0).setDepth(15).setScale(def.scale);
+    sprite.setData("netId", e.id);
+    if (this.anims.exists(def.anim)) sprite.play(def.anim);
+    const healthBar = new HealthBar(this, e.x, e.y - 16, 24, 22, 1);
+    healthBar.setHealth(e.hp, e.maxHp);
+    this.enemies.push({
+      kind: e.kind,
+      def,
+      sprite,
+      hp: e.hp,
+      maxHp: e.maxHp,
+      dead: e.dead,
+      phase: e.phase as EnemyAttackPhase,
+      phaseTimer: 0,
+      stunnedTimer: 0,
+      wasParried: false,
+      strikeHit: false,
+      telegraph: undefined,
+      healthBar,
+    });
+  }
+
+  private applyNetSnapshot(snap: {
+    players: DungeonSnapshotPlayer[];
+    enemies: DungeonSnapshotEnemy[];
+  }): void {
+    const me = snap.players.find((p) => p.id === this.myPlayerId);
+    if (me && !me.dead) {
+      this.hp = me.hp;
+      this.maxHp = me.maxHp;
+      this.playerHpBar.setHealth(this.hp, this.maxHp);
+    } else if (me?.dead && !this.ended) {
+      this.endDungeon(false, "You fell. Run loot lost.", true);
+    }
+
+    for (const p of snap.players) {
+      if (p.id === this.myPlayerId) continue;
+      let sprite = this.peerSprites.get(p.id);
+      if (!sprite) {
+        sprite = new PlayerSprite(this, p.x, p.y, 0xc9b8a8);
+        this.peerSprites.set(p.id, sprite);
+        const label = this.add
+          .text(p.x, p.y - 12, p.name, {
+            fontSize: "8px",
+            color: "#8a7f96",
+            fontFamily: "monospace",
+          })
+          .setOrigin(0.5, 1)
+          .setDepth(22);
+        this.peerLabels.set(p.id, label);
+      }
+      sprite.setPosition(p.x, p.y);
+      sprite.updateAnimation(p.facing, false);
+      this.peerLabels.get(p.id)?.setPosition(p.x, p.y - 8);
+      if (p.dead) sprite.setAlpha(0.35);
+    }
+
+    for (const se of snap.enemies) {
+      const local = this.enemies.find((e) => e.sprite.getData("netId") === se.id);
+      if (!local) continue;
+      local.hp = se.hp;
+      local.dead = se.dead;
+      local.phase = se.phase as EnemyAttackPhase;
+      local.sprite.setPosition(se.x, se.y);
+      local.healthBar.followWorld(se.x, se.y, -18);
+      local.healthBar.setHealth(se.hp, se.maxHp);
+      if (se.dead) {
+        local.sprite.setAlpha(0.35);
+        destroyParryTelegraph(local.telegraph);
+        local.telegraph = undefined;
+      }
+      if (se.phase === "telegraph" && !local.telegraph && !se.dead) {
+        local.telegraph = createParryTelegraph(this, se.x, se.y - 6);
+      }
+      if (se.phase !== "telegraph") {
+        destroyParryTelegraph(local.telegraph);
+        local.telegraph = undefined;
+      }
+    }
+    this.updateHud();
   }
 }

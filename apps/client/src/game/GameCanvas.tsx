@@ -1,15 +1,18 @@
 import { useEffect, useRef } from "react";
 import Phaser from "phaser";
+import type { PlayerProfile } from "@dark-extract/shared";
 import { BootScene } from "./scenes/BootScene";
 import { HubScene } from "./scenes/HubScene";
 import { DungeonScene } from "./scenes/DungeonScene";
 
 type Props = {
   wsUrl: string;
+  authToken: string | null;
   playerName: string;
+  profile: PlayerProfile | null;
 };
 
-export function GameCanvas({ wsUrl, playerName }: Props) {
+export function GameCanvas({ wsUrl, authToken, playerName, profile }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Phaser.Game | null>(null);
 
@@ -40,7 +43,13 @@ export function GameCanvas({ wsUrl, playerName }: Props) {
       callbacks: {
         preBoot: (g) => {
           g.registry.set("wsUrl", wsUrl);
+          g.registry.set("authToken", authToken);
           g.registry.set("playerName", playerName);
+          g.registry.set("playerProfile", profile);
+          if (profile) {
+            g.registry.set("hubInventory", profile.inventory);
+            g.registry.set("playerProgression", profile.progression);
+          }
         },
       },
     });
@@ -48,10 +57,14 @@ export function GameCanvas({ wsUrl, playerName }: Props) {
     gameRef.current = game;
 
     return () => {
+      const conn = game.registry.get("hubConnection");
+      if (conn && typeof conn === "object" && "disconnect" in conn) {
+        (conn as { disconnect: () => void }).disconnect();
+      }
       game.destroy(true);
       gameRef.current = null;
     };
-  }, [wsUrl, playerName]);
+  }, [wsUrl, authToken, playerName, profile]);
 
   return (
     <div className="game-shell">

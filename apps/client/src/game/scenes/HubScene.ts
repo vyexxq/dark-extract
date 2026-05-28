@@ -4,9 +4,12 @@ import {
   HUB_WIDTH_TILES,
   PLAYER_SPEED,
   TILE_SIZE,
+  xpProgressInLevel,
   type Facing,
+  type PartyState,
   type PlayerId,
   type PlayerInventory,
+  type PlayerProgression,
   type PlayerState,
 } from "@dark-extract/shared";
 import { getOrCreateHubConnection, type HubConnection } from "../../network/HubConnection";
@@ -41,6 +44,10 @@ export class HubScene extends Phaser.Scene {
   private promptText: Phaser.GameObjects.Text | null = null;
   private statusText: Phaser.GameObjects.Text | null = null;
   private canEnterDungeon = false;
+  private party: PartyState | null = null;
+  private progression: PlayerProgression = { level: 1, xp: 0 };
+  private inviteKey: Phaser.Input.Keyboard.Key | null = null;
+  private readyKey: Phaser.Input.Keyboard.Key | null = null;
 
   constructor() {
     super({ key: "HubScene" });
@@ -55,6 +62,8 @@ export class HubScene extends Phaser.Scene {
       const stored = this.registry.get("hubInventory") as PlayerInventory | undefined;
       if (stored) this.inventory = stored;
     }
+    const prog = this.registry.get("playerProgression") as PlayerProgression | undefined;
+    if (prog) this.progression = prog;
     if (data?.statusMsg) {
       this.registry.set("hubStatusMsg", data.statusMsg);
     }
@@ -65,6 +74,7 @@ export class HubScene extends Phaser.Scene {
 
     const wsUrl = (this.registry.get("wsUrl") as string) ?? "ws://localhost:2567";
     const playerName = (this.registry.get("playerName") as string) ?? "Hunter";
+    const authToken = (this.registry.get("authToken") as string | null) ?? null;
 
     if (!this.textures.exists("tiles")) {
       this.add
@@ -97,6 +107,8 @@ export class HubScene extends Phaser.Scene {
     }
     this.movementKeys = createMovementKeys(this.input.keyboard);
     this.interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    this.inviteKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.I);
+    this.readyKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
 
     this.hudText = this.add
       .text(8, 8, "", { fontSize: "9px", color: "#8a7f96", fontFamily: "monospace" })
@@ -114,49 +126,71 @@ export class HubScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(200);
 
-    this.connection = getOrCreateHubConnection(this.game, wsUrl, playerName);
+    this.connection = getOrCreateHubConnection(this.game, wsUrl, authToken, playerName);
     this.registry.set("connection", this.connection);
 
     this.connection.setHandlers({
-      onWelcome: (id) => {
+      onWelcome: (id, _name, profile) => {
         if (!this.scene.isActive()) return;
         this.registry.set("networkPlayerId", id);
         this.networkId = id;
+        if (profile) {
+          this.inventory = profile.inventory;
+          this.progression = profile.progression;
+          this.registry.set("hubInventory", profile.inventory);
+          this.registry.set("playerProgression", profile.progression);
+        }
         if (this.localId !== id) {
           this.migrateLocalId(id);
         }
         this.removeDuplicateSelfSprites(id);
         this.setStatus("Connected");
+        this.updateHud();
       },
       onSnapshot: (snapshot) => {
         if (!this.scene.isActive()) return;
         this.syncPlayers(snapshot.players);
       },
-      onInventory: (inv) => {
+      onInventory: (inv, prog) => {
         this.inventory = inv;
+        this.progression = prog;
         this.registry.set("hubInventory", inv);
+        this.registry.set("playerProgression", prog);
         if (this.scene.isActive()) this.updateHud();
       },
-      onDungeonStart: (seed, width, height) => {
+      onPartyUpdate: (party) => {
+        this.party = party;
+        if (this.scene.isActive()) this.updateHud();
+      },
+      onDungeonStart: (payload) => {
         if (!this.scene.isActive()) return;
         this.ready = false;
         this.clearAllPlayers();
         this.connection.clearHandlers();
         this.scene.start("DungeonScene", {
-          seed,
-          width,
-          height,
+          seed: payload.seed,
+          width: payload.width,
+          height: payload.height,
           inventory: this.inventory,
+          party: payload.party,
+          instanceId: payload.instanceId,
+          players: payload.players,
+          enemies: payload.enemies,
         });
       },
       onDungeonEnd: (msg) => {
         this.registry.set("hubStatusMsg", msg);
       },
-      onExtractOk: (inv, msg) => {
+      onExtractOk: (inv, prog, msg) => {
         this.inventory = inv;
+        this.progression = prog;
         this.registry.set("hubInventory", inv);
+        this.registry.set("playerProgression", prog);
         this.registry.set("hubStatusMsg", msg);
       },
+      onLevelUp: () => {},
+      onDungeonSnapshot: () => {},
+      onDungeonLoot: () => {},
       onError: (msg) => {
         if (this.scene.isActive()) this.setStatus(`Error: ${msg}`);
       },
@@ -222,13 +256,36 @@ export class HubScene extends Phaser.Scene {
     const dist = Phaser.Math.Distance.Between(this.localPos.x, this.localPos.y, contractX, contractY);
     this.canEnterDungeon = dist < CONTRACTS_RADIUS;
 
+    if (this.inviteKey && Phaser.Input.Keyboard.JustDown(this.inviteKey)) {
+      this.inviteNearestPlayer();
+    }
+
+    if (this.readyKey && Phaser.Input.Keyboard.JustDown(this.readyKey)) {
+      const me = this.party?.members.find((m) => m.playerId === this.networkId);
+      const ready = !me?.ready;
+      this.connection.partyReady(ready);
+    }
+
     if (this.canEnterDungeon) {
-      this.promptText?.setText("[E] Enter Goblin Cave (solo)");
-      if (this.interactKey && Phaser.Input.Keyboard.JustDown(this.interactKey)) {
-        this.connection.enterDungeon();
+      const inParty = this.party && this.party.members.length > 1;
+      const isLeader = this.party?.leaderId === this.networkId;
+      const allReady = this.party?.members.every((m) => m.ready);
+
+      if (inParty && isLeader && allReady) {
+        this.promptText?.setText("[E] Start party cave (all ready)");
+        if (this.interactKey && Phaser.Input.Keyboard.JustDown(this.interactKey)) {
+          this.connection.partyStartDungeon();
+        }
+      } else if (inParty) {
+        this.promptText?.setText("[R] Ready · leader [E] when all ready");
+      } else {
+        this.promptText?.setText("[E] Solo goblin cave · [I] invite nearby");
+        if (this.interactKey && Phaser.Input.Keyboard.JustDown(this.interactKey)) {
+          this.connection.enterDungeonSolo();
+        }
       }
     } else {
-      this.promptText?.setText("");
+      this.promptText?.setText(this.party ? "[R] toggle ready · [I] invite" : "");
     }
 
     const now = this.time.now;
@@ -301,7 +358,35 @@ export class HubScene extends Phaser.Scene {
   private updateHud(): void {
     if (!this.hudText?.active) return;
     const mats = this.inventory.materials.map((m) => `${m.id}:${m.qty}`).join(" ") || "none";
-    this.hudText.setText(`Loot: ${mats} · gold ${this.inventory.gold}`);
+    const xp = xpProgressInLevel(this.progression);
+    const partyTxt = this.party
+      ? ` · party ${this.party.members.length} (${this.party.members.filter((m) => m.ready).length} ready)`
+      : "";
+    this.hudText.setText(
+      `Lv${this.progression.level} XP ${xp.current}/${xp.needed} · ${mats} · gold ${this.inventory.gold}${partyTxt}`,
+    );
+  }
+
+  private inviteNearestPlayer(): void {
+    if (!this.networkId) return;
+    let bestId: PlayerId | null = null;
+    let bestName = "";
+    let bestD = 80;
+    for (const [id, s] of this.sprites) {
+      if (id === this.localId || id === this.networkId) continue;
+      const d = Phaser.Math.Distance.Between(this.localPos.x, this.localPos.y, s.x, s.y);
+      if (d < bestD) {
+        bestD = d;
+        bestId = id;
+        bestName = this.labels.get(id)?.text ?? "Hunter";
+      }
+    }
+    if (bestId) {
+      this.connection.partyInvite(bestId);
+      this.setStatus(`Invited ${bestName}`);
+    } else {
+      this.setStatus("No hunter nearby to invite");
+    }
   }
 
   private drawLandmarks(): void {

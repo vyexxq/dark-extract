@@ -1,3 +1,6 @@
+import type { PlayerProgression } from "./progression.js";
+import type { PlayerInventory } from "./inventory.js";
+
 export type PlayerId = string;
 
 export type ZoneId = "hub" | "dungeon";
@@ -13,11 +16,32 @@ export interface PlayerState {
   x: number;
   y: number;
   facing: Facing;
+  level: number;
 }
 
 export type Facing = "up" | "down" | "left" | "right";
 
+export interface PlayerProfile {
+  accountId: string;
+  username: string;
+  progression: PlayerProgression;
+  inventory: PlayerInventory;
+}
+
 export interface HubSnapshot {
   players: PlayerState[];
   serverTime: number;
+}
+
+export interface PartyMemberInfo {
+  playerId: PlayerId;
+  name: string;
+  ready: boolean;
+  isLeader: boolean;
+}
+
+export interface PartyState {
+  partyId: string;
+  leaderId: PlayerId;
+  members: PartyMemberInfo[];
 }

@@ -8,7 +8,7 @@ See project README for technical setup. Full vision: hub → dungeon contract �
 |-------|--------|
 | **0** ✅ | Hub greybox, multiplayer movement, shared protocol |
 | **1** ✅ | Solo dungeon: goblins, loot, extract, death penalty B, proc gen |
-| **2** | Duo/trio sync combat, goblin cave template |
+| **2** ✅ | Duo/trio sync combat, goblin cave template, accounts, XP levels |
 | **3** | Crafting sinks, player market stalls |
 | **4** | Dark Knight world event, legendary materials |
 | **5** | Lazy-mint chain layer (withdraw/trade only) |
