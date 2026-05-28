@@ -27,7 +27,7 @@ Our `render.yaml` includes `plan: free`, but the blueprint UI may still show $7.
 4. **Root Directory:** leave blank (repo root)
 5. **Build Command:**
    ```bash
-   npm install && npm run build -w @dark-extract/shared && npm run build -w @dark-extract/server
+   npm install && npm run build:server
    ```
 6. **Start Command:**
    ```bash

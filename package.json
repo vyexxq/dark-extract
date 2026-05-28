@@ -12,6 +12,7 @@
     "dev:server": "npm run dev -w @dark-extract/server",
     "dev:client": "npm run dev -w @dark-extract/client",
     "build": "npm run build -w @dark-extract/shared && npm run build -w @dark-extract/server && npm run build -w @dark-extract/client",
+    "build:server": "npm run build -w @dark-extract/shared && npm run build -w @dark-extract/server",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {

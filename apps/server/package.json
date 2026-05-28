@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "npm run build -w @dark-extract/shared && tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },

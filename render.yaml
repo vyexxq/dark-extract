@@ -4,7 +4,7 @@ services:
     name: dark-extract-server
     plan: free
     runtime: node
-    buildCommand: npm install && npm run build -w @dark-extract/shared && npm run build -w @dark-extract/server
+    buildCommand: npm install && npm run build:server
     startCommand: npm run start -w @dark-extract/server
     healthCheckPath: /
     envVars:
