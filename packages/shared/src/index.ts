@@ -1,4 +1,5 @@
 export * from "./constants.js";
+export * from "./hub.js";
 export * from "./dungeon.js";
 export * from "./dungeonTemplate.js";
 export * from "./dungeonSim.js";

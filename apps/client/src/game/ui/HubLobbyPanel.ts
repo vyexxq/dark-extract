@@ -3,6 +3,7 @@ import { xpProgressInLevel, type PartyState, type PlayerInventory, type PlayerPr
 import type { PlayerId } from "@dark-extract/shared";
 
 type InviteHandler = (targetId: PlayerId) => void;
+type LeaveHandler = () => void;
 
 /**
  * TAB lobby overlay — profile, party, hunter list with invite buttons.
@@ -14,11 +15,13 @@ export class HubLobbyPanel extends Phaser.GameObjects.Container {
   private readonly partyText: Phaser.GameObjects.Text;
   private readonly listTitle: Phaser.GameObjects.Text;
   private readonly hintText: Phaser.GameObjects.Text;
+  private readonly leaveBtn: Phaser.GameObjects.Text;
   private readonly rowTexts: Phaser.GameObjects.Text[] = [];
   private readonly inviteButtons: Phaser.GameObjects.Text[] = [];
   private roster: PlayerState[] = [];
   private myId: PlayerId = "";
   private onInvite: InviteHandler = () => {};
+  private onLeave: LeaveHandler = () => {};
 
   constructor(scene: Phaser.Scene) {
     super(scene, 320, 240);
@@ -59,12 +62,24 @@ export class HubLobbyPanel extends Phaser.GameObjects.Container {
       })
       .setOrigin(0, 0);
     this.hintText = scene.add
-      .text(0, 150, "[Tab] close · [R] ready at Contracts", {
+      .text(0, 150, "[Tab] close · invites need accept · [R] at Contracts", {
         fontSize: "8px",
         color: "#6a5f76",
         fontFamily: "monospace",
       })
       .setOrigin(0.5);
+    this.leaveBtn = scene.add
+      .text(0, 128, "[ Leave party ]", {
+        fontSize: "9px",
+        color: "#c95050",
+        fontFamily: "monospace",
+        backgroundColor: "#301818",
+        padding: { x: 6, y: 3 },
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .setVisible(false);
+    this.leaveBtn.on("pointerdown", () => this.onLeave());
 
     this.add([
       this.panelBg,
@@ -72,6 +87,7 @@ export class HubLobbyPanel extends Phaser.GameObjects.Container {
       this.profileText,
       this.partyText,
       this.listTitle,
+      this.leaveBtn,
       this.hintText,
     ]);
 
@@ -108,6 +124,10 @@ export class HubLobbyPanel extends Phaser.GameObjects.Container {
     this.onInvite = fn;
   }
 
+  setLeaveHandler(fn: LeaveHandler): void {
+    this.onLeave = fn;
+  }
+
   setMyId(id: PlayerId): void {
     this.myId = id;
   }
@@ -136,16 +156,23 @@ export class HubLobbyPanel extends Phaser.GameObjects.Container {
       `${playerName}\nLv ${progression.level} · XP ${xp.current}/${xp.needed}\nGold ${inventory.gold} · ${mats}`,
     );
 
-    if (party && party.members.length > 0) {
+    const inParty = party && party.members.length > 1;
+    this.leaveBtn.setVisible(!!inParty);
+
+    if (inParty) {
       const lines = party.members
         .map((m) => {
-          const tags = [m.isLeader ? "leader" : "", m.ready ? "ready" : "—"].filter(Boolean);
-          return `· ${m.name} ${tags.join(" ")}`;
+          const tags = [
+            m.isLeader ? "leader" : "",
+            m.ready ? "ready" : "not ready",
+            m.atContract ? "at board" : "away",
+          ].filter(Boolean);
+          return `· ${m.name} — ${tags.join(", ")}`;
         })
         .join("\n");
       this.partyText.setText(`Party (${party.members.length}/3)\n${lines}`);
     } else {
-      this.partyText.setText("Party: none — invite hunters below");
+      this.partyText.setText("Party: solo — invite hunters (they must accept)");
     }
 
     const others = roster.filter((p) => p.id !== this.myId);

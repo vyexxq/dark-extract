@@ -1,8 +1,13 @@
-import { HUB_HEIGHT_TILES, HUB_WIDTH_TILES } from "@dark-extract/shared";
+import {
+  HUB_CONTRACTS_RADIUS_PX,
+  HUB_CONTRACTS_TILE,
+  HUB_HEIGHT_TILES,
+  HUB_WIDTH_TILES,
+} from "@dark-extract/shared";
 import { TILE } from "../art/TextureFactory";
 
-export const CONTRACTS_TILE = { tx: 20, ty: 8 };
-export const CONTRACTS_RADIUS = 48;
+export const CONTRACTS_TILE = HUB_CONTRACTS_TILE;
+export const CONTRACTS_RADIUS = HUB_CONTRACTS_RADIUS_PX;
 
 export function getHubTileIndex(tx: number, ty: number): number {
   const edge =

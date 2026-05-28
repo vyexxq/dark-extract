@@ -2,10 +2,12 @@ import Phaser from "phaser";
 import {
   HUB_HEIGHT_TILES,
   HUB_WIDTH_TILES,
+  isNearHubContracts,
   PLAYER_SPEED,
   TILE_SIZE,
   xpProgressInLevel,
   type Facing,
+  type PartyInviteInfo,
   type PartyState,
   type PlayerId,
   type PlayerInventory,
@@ -14,10 +16,12 @@ import {
 } from "@dark-extract/shared";
 import { getOrCreateHubConnection, type HubConnection } from "../../network/HubConnection";
 import { PlayerSprite } from "../entities/PlayerSprite";
-import { CONTRACTS_RADIUS, CONTRACTS_TILE, getHubTileIndex } from "../hub/hubLayout";
+import { CONTRACTS_TILE, getHubTileIndex } from "../hub/hubLayout";
 import { createMovementKeys, readMovement, type MovementKeys } from "../input/createMovementKeys";
 import { renderTileGrid } from "../map/renderTilemap";
+import { ContractPanel } from "../ui/ContractPanel";
 import { HubLobbyPanel } from "../ui/HubLobbyPanel";
+import { PartyInviteModal } from "../ui/PartyInviteModal";
 
 const WORLD_W = HUB_WIDTH_TILES * TILE_SIZE;
 const WORLD_H = HUB_HEIGHT_TILES * TILE_SIZE;
@@ -50,7 +54,13 @@ export class HubScene extends Phaser.Scene {
   private readyKey: Phaser.Input.Keyboard.Key | null = null;
   private tabKey: Phaser.Input.Keyboard.Key | null = null;
   private lobbyPanel!: HubLobbyPanel;
+  private contractPanel!: ContractPanel;
+  private inviteModal!: PartyInviteModal;
+  private pendingInvites: PartyInviteInfo[] = [];
   private hubRoster: PlayerState[] = [];
+  private acceptKey: Phaser.Input.Keyboard.Key | null = null;
+  private declineKey: Phaser.Input.Keyboard.Key | null = null;
+  private contractGlow: Phaser.GameObjects.Rectangle | null = null;
 
   constructor() {
     super({ key: "HubScene" });
@@ -112,11 +122,23 @@ export class HubScene extends Phaser.Scene {
     this.interactKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
     this.readyKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
     this.tabKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB);
+    this.acceptKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Y);
+    this.declineKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.N);
 
     this.lobbyPanel = new HubLobbyPanel(this);
+    this.contractPanel = new ContractPanel(this);
+    this.inviteModal = new PartyInviteModal(this);
+    this.inviteModal.setHandlers(
+      (inviteId) => this.connection.partyAccept(inviteId),
+      (inviteId) => this.connection.partyDecline(inviteId),
+    );
     this.lobbyPanel.setInviteHandler((targetId) => {
       this.connection.partyInvite(targetId);
-      this.setStatus("Invite sent");
+      this.setStatus("Invite sent — they must accept");
+    });
+    this.lobbyPanel.setLeaveHandler(() => {
+      this.connection.partyLeave();
+      this.setStatus("Left party");
     });
 
     this.hudText = this.add
@@ -176,8 +198,27 @@ export class HubScene extends Phaser.Scene {
         this.party = party;
         if (this.scene.isActive()) {
           this.updateHud();
+          this.refreshContractUi();
           if (this.lobbyPanel.isOpen()) this.refreshLobbyPanel();
         }
+      },
+      onPartyInviteReceived: (invite) => {
+        if (!this.scene.isActive()) return;
+        this.pendingInvites.push(invite);
+        this.inviteModal.show(invite);
+        this.setStatus(`${invite.fromName} invited you — [Y] accept · [N] decline`);
+      },
+      onPartyInviteResolved: (inviteId, accepted) => {
+        this.pendingInvites = this.pendingInvites.filter((i) => i.inviteId !== inviteId);
+        if (this.inviteModal.getInviteId() === inviteId) {
+          this.inviteModal.hide();
+        }
+        if (this.scene.isActive() && accepted) {
+          this.setStatus("Party member joined");
+        }
+      },
+      onHubNotice: (msg) => {
+        if (this.scene.isActive()) this.setStatus(msg);
       },
       onDungeonStart: (payload) => {
         if (!this.scene.isActive()) return;
@@ -255,6 +296,19 @@ export class HubScene extends Phaser.Scene {
       if (open) this.refreshLobbyPanel();
     }
 
+    if (this.inviteModal.isOpen()) {
+      if (this.acceptKey && Phaser.Input.Keyboard.JustDown(this.acceptKey)) {
+        const id = this.inviteModal.getInviteId();
+        if (id) this.connection.partyAccept(id);
+        this.inviteModal.hide();
+      }
+      if (this.declineKey && Phaser.Input.Keyboard.JustDown(this.declineKey)) {
+        const id = this.inviteModal.getInviteId();
+        if (id) this.connection.partyDecline(id);
+        this.inviteModal.hide();
+      }
+    }
+
     if (this.lobbyPanel.isOpen()) {
       this.promptText?.setText("[Tab] close lobby");
       return;
@@ -285,37 +339,32 @@ export class HubScene extends Phaser.Scene {
       this.cameras.main.startFollow(localSprite, true, 0.12, 0.12);
     }
 
-    const contractX = CONTRACTS_TILE.tx * TILE_SIZE + TILE_SIZE / 2;
-    const contractY = CONTRACTS_TILE.ty * TILE_SIZE + TILE_SIZE / 2;
-    const dist = Phaser.Math.Distance.Between(this.localPos.x, this.localPos.y, contractX, contractY);
-    this.canEnterDungeon = dist < CONTRACTS_RADIUS;
+    this.canEnterDungeon = isNearHubContracts(this.localPos.x, this.localPos.y);
+    const myId = this.myNetworkId();
+    this.contractGlow?.setVisible(this.canEnterDungeon);
 
     if (this.readyKey && Phaser.Input.Keyboard.JustDown(this.readyKey)) {
-      const me = this.party?.members.find((m) => m.playerId === this.networkId);
-      const ready = !me?.ready;
-      this.connection.partyReady(ready);
-    }
-
-    if (this.canEnterDungeon) {
       const inParty = this.party && this.party.members.length > 1;
-      const isLeader = this.party?.leaderId === this.networkId;
-      const allReady = this.party?.members.every((m) => m.ready);
-
-      if (inParty && isLeader && allReady) {
-        this.promptText?.setText("[E] Start party cave (all ready)");
-        if (this.interactKey && Phaser.Input.Keyboard.JustDown(this.interactKey)) {
-          this.connection.partyStartDungeon();
-        }
-      } else if (inParty) {
-        this.promptText?.setText("[R] Ready · leader [E] when all ready");
-      } else {
-        this.promptText?.setText("[Tab] lobby & invites · [E] solo cave");
-        if (this.interactKey && Phaser.Input.Keyboard.JustDown(this.interactKey)) {
-          this.connection.enterDungeonSolo();
+      if (inParty) {
+        if (!this.canEnterDungeon) {
+          this.setStatus("Stand at the Contracts board to ready up");
+        } else {
+          const me = this.party?.members.find((m) => m.playerId === myId);
+          this.connection.partyReady(!me?.ready);
         }
       }
-    } else {
-      this.promptText?.setText(this.party ? "[Tab] lobby · [R] ready" : "[Tab] hunter lobby");
+    }
+
+    this.refreshContractUi();
+
+    if (this.canEnterDungeon && this.interactKey && Phaser.Input.Keyboard.JustDown(this.interactKey)) {
+      this.connection.enterDungeon();
+    } else if (!this.canEnterDungeon) {
+      const partyHint =
+        this.party && this.party.members.length > 1
+          ? " · meet at Contracts to ready"
+          : "";
+      this.promptText?.setText(`[Tab] hunter lobby${partyHint}`);
     }
 
     const now = this.time.now;
@@ -397,11 +446,35 @@ export class HubScene extends Phaser.Scene {
     );
   }
 
-  private refreshLobbyPanel(): void {
-    const myId =
+  private myNetworkId(): PlayerId {
+    return (
       (this.registry.get("networkPlayerId") as PlayerId | undefined) ??
       this.networkId ??
-      this.localId;
+      this.localId
+    );
+  }
+
+  private refreshContractUi(): void {
+    const myId = this.myNetworkId();
+    const solo = !this.party || this.party.members.length < 2;
+    this.contractPanel.refresh(this.party, myId, this.canEnterDungeon, solo);
+    if (this.canEnterDungeon) {
+      const inParty = this.party && this.party.members.length > 1;
+      const isLeader = this.party?.leaderId === myId;
+      const allReady = this.party?.members.every((m) => m.ready);
+      const allHere = this.party?.members.every((m) => m.atContract);
+      if (inParty && isLeader && allReady && allHere) {
+        this.promptText?.setText("[E] Sign contract — start Goblin Cave");
+      } else if (inParty) {
+        this.promptText?.setText("[R] ready at board · leader [E] when everyone is ready");
+      } else {
+        this.promptText?.setText("[E] Enter cave solo · [Tab] invite friends first");
+      }
+    }
+  }
+
+  private refreshLobbyPanel(): void {
+    const myId = this.myNetworkId();
     this.lobbyPanel.setMyId(myId);
     this.lobbyPanel.refresh(
       (this.registry.get("playerName") as string) ?? "Hunter",
@@ -415,6 +488,11 @@ export class HubScene extends Phaser.Scene {
   private drawLandmarks(): void {
     const cx = CONTRACTS_TILE.tx * TILE_SIZE + TILE_SIZE / 2;
     const cy = CONTRACTS_TILE.ty * TILE_SIZE + TILE_SIZE / 2;
+    this.contractGlow = this.add
+      .rectangle(cx, cy, 36, 28, 0xe8a84a, 0.12)
+      .setStrokeStyle(1, 0xe8a84a, 0.35)
+      .setDepth(4)
+      .setVisible(false);
     this.add.rectangle(cx, cy, 28, 20, 0x4a3a5c, 0.6).setDepth(5);
     this.add
       .text(cx, cy - 22, "Contracts", { fontSize: "8px", color: "#d8d0e0", fontFamily: "monospace" })

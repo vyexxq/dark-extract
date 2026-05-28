@@ -5,6 +5,7 @@ import {
   type DungeonSnapshotPlayer,
   type Facing,
   type HubSnapshot,
+  type PartyInviteInfo,
   type PartyState,
   type PlayerId,
   type PlayerInventory,
@@ -18,6 +19,9 @@ export type HubHandlers = {
   onSnapshot: (snapshot: HubSnapshot) => void;
   onInventory: (inventory: PlayerInventory, progression: PlayerProgression) => void;
   onPartyUpdate: (party: PartyState | null) => void;
+  onPartyInviteReceived: (invite: PartyInviteInfo) => void;
+  onPartyInviteResolved: (inviteId: string, accepted: boolean) => void;
+  onHubNotice: (message: string) => void;
   onDungeonStart: (payload: {
     instanceId: string;
     seed: number;
@@ -50,6 +54,9 @@ const INERT_HANDLERS: HubHandlers = {
   onSnapshot: noop,
   onInventory: noop,
   onPartyUpdate: noop,
+  onPartyInviteReceived: noop,
+  onPartyInviteResolved: noop,
+  onHubNotice: noop,
   onDungeonStart: noop,
   onDungeonSnapshot: noop,
   onDungeonLoot: noop,
@@ -119,6 +126,15 @@ export class HubConnection {
             break;
           case "party_update":
             this.handlers.onPartyUpdate(message.party);
+            break;
+          case "party_invite_received":
+            this.handlers.onPartyInviteReceived(message.invite);
+            break;
+          case "party_invite_resolved":
+            this.handlers.onPartyInviteResolved(message.inviteId, message.accepted);
+            break;
+          case "hub_notice":
+            this.handlers.onHubNotice(message.message);
             break;
           case "dungeon_start":
             this.handlers.onDungeonStart({
@@ -200,11 +216,15 @@ export class HubConnection {
     this.send({ type: "party_ready", ready });
   }
 
-  partyStartDungeon(): void {
-    this.send({ type: "party_start_dungeon" });
+  partyAccept(inviteId: string): void {
+    this.send({ type: "party_accept", inviteId });
   }
 
-  enterDungeonSolo(): void {
+  partyDecline(inviteId: string): void {
+    this.send({ type: "party_decline", inviteId });
+  }
+
+  enterDungeon(): void {
     if (this.connected) {
       this.send({ type: "enter_dungeon" });
       return;

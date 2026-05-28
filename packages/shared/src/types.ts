@@ -38,10 +38,18 @@ export interface PartyMemberInfo {
   name: string;
   ready: boolean;
   isLeader: boolean;
+  atContract: boolean;
 }
 
 export interface PartyState {
   partyId: string;
   leaderId: PlayerId;
   members: PartyMemberInfo[];
+}
+
+export interface PartyInviteInfo {
+  inviteId: string;
+  fromPlayerId: PlayerId;
+  fromName: string;
+  partyId: string;
 }

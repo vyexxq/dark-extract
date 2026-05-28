@@ -30,12 +30,17 @@ import {
 } from "./dungeonRoom.js";
 import type { HubClient } from "./hubTypes.js";
 import {
+  acceptInvite,
+  allMembersAtContract,
+  createInvite,
   createParty,
+  declineInvite,
   dissolveParty,
+  getPartyById,
   getPartyForPlayer,
   getPartyState,
-  inviteToParty,
   leaveParty,
+  notReadyNames,
   partyAllReady,
   setReady,
 } from "./party.js";
@@ -91,27 +96,68 @@ function sendInventory(client: HubClient): void {
   });
 }
 
-function playerNames(): Map<PlayerId, string> {
-  const m = new Map<PlayerId, string>();
-  for (const c of hubClients.values()) {
-    m.set(c.id, c.state.name);
+function sendNotice(socket: WebSocket, message: string): void {
+  send(socket, { type: "hub_notice", message });
+}
+
+function broadcastPartyAll(partyId: string): void {
+  const party = getPartyById(partyId);
+  if (!party) return;
+  const state = getPartyState(party, hubClients);
+  for (const memberId of party.memberIds) {
+    const member = hubClients.get(memberId);
+    if (member) send(member.socket, { type: "party_update", party: state });
   }
-  return m;
 }
 
 function broadcastParty(client: HubClient): void {
   const party = getPartyForPlayer(client.id);
   send(client.socket, {
     type: "party_update",
-    party: party ? getPartyState(party, playerNames()) : null,
+    party: party ? getPartyState(party, hubClients) : null,
   });
 }
 
-function broadcastPartyAll(partyId: string): void {
-  for (const c of hubClients.values()) {
-    const p = getPartyForPlayer(c.id);
-    if (p?.id === partyId) broadcastParty(c);
+function tryStartPartyDungeon(leader: HubClient): void {
+  const party = getPartyForPlayer(leader.id);
+  if (!party) {
+    send(leader.socket, { type: "error", message: "You are not in a party" });
+    return;
   }
+  if (party.memberIds.length < 2) {
+    send(leader.socket, { type: "error", message: "Need at least 2 hunters for a party run" });
+    return;
+  }
+  if (party.leaderId !== leader.id) {
+    sendNotice(leader.socket, "Only the party leader can sign the contract");
+    return;
+  }
+  const waiting = notReadyNames(party, hubClients);
+  if (waiting.length > 0) {
+    sendNotice(leader.socket, `Waiting for ready: ${waiting.join(", ")}`);
+    return;
+  }
+  if (!partyAllReady(party)) {
+    sendNotice(leader.socket, "Everyone must ready up at the Contracts board (R)");
+    return;
+  }
+  const atContract = allMembersAtContract(party, hubClients);
+  if (!atContract.ok) {
+    sendNotice(leader.socket, `Meet at Contracts: ${atContract.missing.join(", ")}`);
+    return;
+  }
+  const members = party.memberIds
+    .map((id) => hubClients.get(id))
+    .filter((c): c is HubClient => !!c && !c.inDungeon);
+  if (members.length !== party.memberIds.length) {
+    send(leader.socket, { type: "error", message: "All party members must be in the hub" });
+    return;
+  }
+  const pid = party.id;
+  dissolveParty(pid);
+  startDungeon(members, true);
+  broadcast({ type: "hub_snapshot", snapshot: buildSnapshot() });
+  sendNotice(leader.socket, "Entering Goblin Cave…");
 }
 
 function attachClient(
@@ -181,6 +227,8 @@ function handleMessage(client: HubClient, message: ClientMessage): void {
       client.state.x = x;
       client.state.y = y;
       client.state.facing = message.facing;
+      const partyOnMove = getPartyForPlayer(client.id);
+      if (partyOnMove) broadcastPartyAll(partyOnMove.id);
       break;
     }
     case "party_invite": {
@@ -190,22 +238,70 @@ function handleMessage(client: HubClient, message: ClientMessage): void {
         send(client.socket, { type: "error", message: "Player not available" });
         return;
       }
+      if (target.id === client.id) {
+        send(client.socket, { type: "error", message: "Cannot invite yourself" });
+        return;
+      }
       let party = getPartyForPlayer(client.id);
       if (!party) party = createParty(client.id);
       if (party.leaderId !== client.id) {
         send(client.socket, { type: "error", message: "Only party leader can invite" });
         return;
       }
-      if (!inviteToParty(party, target.id)) {
-        send(client.socket, { type: "error", message: "Party is full" });
+      const invite = createInvite(party, client.id, target.id);
+      if (!invite) {
+        send(client.socket, { type: "error", message: "Could not send invite (party full or pending)" });
         return;
       }
-      const state = getPartyState(party, playerNames());
-      send(client.socket, { type: "party_update", party: state });
-      send(target.socket, { type: "party_update", party: state });
+      send(target.socket, {
+        type: "party_invite_received",
+        invite: {
+          inviteId: invite.id,
+          fromPlayerId: client.id,
+          fromName: client.state.name,
+          partyId: party.id,
+        },
+      });
+      sendNotice(client.socket, `Invite sent to ${target.state.name}`);
+      broadcastParty(client);
       break;
     }
     case "party_accept": {
+      const result = acceptInvite(message.inviteId, client.id);
+      if (!result) {
+        send(client.socket, { type: "error", message: "Invite expired or invalid" });
+        return;
+      }
+      const { party, invite } = result;
+      const from = hubClients.get(invite.fromId);
+      const leaderName = from?.state.name ?? "party";
+      sendNotice(client.socket, `Joined ${leaderName}'s party`);
+      if (from) {
+        sendNotice(from.socket, `${client.state.name} joined your party`);
+        send(from.socket, {
+          type: "party_invite_resolved",
+          inviteId: invite.id,
+          accepted: true,
+        });
+      }
+      broadcastPartyAll(party.id);
+      break;
+    }
+    case "party_decline": {
+      const invite = declineInvite(message.inviteId, client.id);
+      if (!invite) {
+        send(client.socket, { type: "error", message: "Invite expired" });
+        return;
+      }
+      const from = hubClients.get(invite.fromId);
+      if (from) {
+        sendNotice(from.socket, `${client.state.name} declined your invite`);
+        send(from.socket, {
+          type: "party_invite_resolved",
+          inviteId: invite.id,
+          accepted: false,
+        });
+      }
       break;
     }
     case "party_leave": {
@@ -219,46 +315,27 @@ function handleMessage(client: HubClient, message: ClientMessage): void {
       break;
     }
     case "party_ready": {
-      let party = getPartyForPlayer(client.id);
-      if (!party) party = createParty(client.id);
-      setReady(party, client.id, message.ready);
-      const state = getPartyState(party, playerNames());
-      for (const memberId of party.memberIds) {
-        const member = hubClients.get(memberId);
-        if (member) send(member.socket, { type: "party_update", party: state });
-      }
-      break;
-    }
-    case "party_start_dungeon": {
       const party = getPartyForPlayer(client.id);
-      if (!party || party.leaderId !== client.id) {
-        send(client.socket, { type: "error", message: "You are not party leader" });
+      if (!party) {
+        send(client.socket, { type: "error", message: "Join a party first" });
         return;
       }
-      if (!partyAllReady(party)) {
-        send(client.socket, { type: "error", message: "All party members must ready up" });
+      const err = setReady(party, client.id, message.ready, client);
+      if (err) {
+        sendNotice(client.socket, err);
         return;
       }
-      const members = party.memberIds
-        .map((id) => hubClients.get(id))
-        .filter((c): c is HubClient => !!c && !c.inDungeon);
-      if (members.length !== party.memberIds.length) {
-        send(client.socket, { type: "error", message: "Party not in hub" });
-        return;
+      broadcastPartyAll(party.id);
+      if (message.ready) {
+        sendNotice(client.socket, "You are ready");
       }
-      dissolveParty(party.id);
-      startDungeon(members, true);
-      broadcast({ type: "hub_snapshot", snapshot: buildSnapshot() });
       break;
     }
     case "enter_dungeon": {
       if (client.inDungeon) return;
       const party = getPartyForPlayer(client.id);
-      if (party && party.memberIds.length > 1) {
-        send(client.socket, {
-          type: "error",
-          message: "Use party Start when grouped (everyone ready)",
-        });
+      if (party && party.memberIds.length >= 2) {
+        tryStartPartyDungeon(client);
         return;
       }
       startDungeon([client], false);
